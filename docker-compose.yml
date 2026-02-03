@@ -1,0 +1,76 @@
+version: '3.8'
+
+services:
+  # 1. 数据库服务
+  db:
+    image: mysql:8.0
+    container_name: scrm_db
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MYSQL_DATABASE: store_scrm
+      MYSQL_USER: ${DB_USER}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_general_ci
+    # --- 核心修正 A: 数据库映射 3307 (避开宿主机的 3306) ---
+    ports:
+      - "3307:3306"
+    volumes:
+      - ./mysql_data:/var/lib/mysql
+      - ./mysql_init:/docker-entrypoint-initdb.d
+    networks:
+      - scrm_network
+    healthcheck:
+      test: ["CMD", "mysqladmin" ,"ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+
+  # 2. 后端 API 服务
+  backend:
+    build: 
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: scrm_backend
+    restart: always
+    # --- 核心修正 B: 后端必须映射 8000 端口 ---
+    ports:
+      - "8000:8000"
+    environment:
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: store_scrm
+      UPLOAD_DIR: /app/uploads
+      # 图片访问地址 (直接指向后端端口)
+      IMG_BASE_URL: http://203.2.161.252:8000/uploads
+    volumes:
+      - /store_scrm-FTP:/app/uploads
+      - ./backend:/app # 关键：代码热更新挂载
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - scrm_network
+
+  # 3. 前端服务
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: scrm_frontend
+    restart: always
+    ports:
+      - "8686:80"
+    # --- 核心修改：挂载 Nginx 配置文件 ---
+    volumes:
+      - ./frontend/nginx.conf:/etc/nginx/conf.d/default.conf
+    # -----------------------------------
+    depends_on:
+      - backend
+    networks:
+      - scrm_network
+
+networks:
+  scrm_network:
+    driver: bridge
